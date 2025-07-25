@@ -1,0 +1,14 @@
+
+############################################################
+# requirements.txt - NOTREKT.AI v2.0
+# Refactor Summary (2025-07-25):
+# - All dependencies for API, governance, and agent logic
+# - [GAP: Add sentence-transformers, faiss, and other dependencies as needed]
+# SOP-ARC-001, SOP-GOV-001
+############################################################
+fastapi
+uvicorn
+python-jose
+pydantic
+python-dotenv
+# [GAP: Add sentence-transformers, faiss, and other dependencies as needed]

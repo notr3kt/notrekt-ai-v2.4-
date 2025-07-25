@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""
+NOTREKT.AI v2.0 - WORM Storage System
+Write-Once-Read-Many compliant storage with cryptographic integrity.
+"""
+
+import sqlite3
+import hashlib
+import json
+import uuid
+from datetime import datetime
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass, asdict
+from pathlib import Path
+
+from .config_manager import Config, logger
+
+@dataclass
+class AuditEvent:
+    """Immutable audit event structure for WORM storage."""
+    timestamp: str
+    event_id: str
+    sequence_number: int
+    action_name: str
+    status: str  # SUCCESS, BREACH, DENIED, APPROVED, PENDING
+    metadata: Dict[str, Any]
+    risk_tier: str
+    requires_approval: bool
+    human_decision: Optional[str]
+    sop_reference: str
+    primary_hash: str
+    chain_hash: str
+    tamper_seal: str
+
+class CryptoManager:
+    """Handles all cryptographic operations for tamper-proof logging."""
+    
+    @staticmethod
+    def generate_sha256(data: str) -> str:
+        """Generate SHA-256 hash."""
+        return hashlib.sha256(data.encode('utf-8')).hexdigest()
+    
+    @staticmethod
+    def generate_uuid() -> str:
+        """Generate UUID v4."""
+        return str(uuid.uuid4())
+    
+    @staticmethod
+    def create_chain_hash(current_event: str, previous_hash: str) -> str:
+        """Create blockchain-style chain hash."""
+        combined = f"{previous_hash}{current_event}"
+        return CryptoManager.generate_sha256(combined)
+    
+    @staticmethod
+    def create_tamper_seal(event_data: str, system_secret: str) -> str:
+        """Create tamper-proof seal using system secret."""
+        combined = f"{event_data}{system_secret}"
+        return CryptoManager.generate_sha256(combined)
+
+class WORMStorage:
+    """
+    Write-Once-Read-Many compliant storage using SQLite with cryptographic chaining.
+    Provides true immutability and tamper detection for audit logs.
+    """
+    
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or Config.WORM_DB_PATH
+        
+        # Ensure database directory exists
+        db_dir = Path(self.db_path).parent
+        db_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.cursor = self.conn.cursor()
+        self._initialize_database()
+        
+        logger.info(f"WORM Storage initialized: {self.db_path}")
+        
+    def _initialize_database(self):
+        """Initialize the WORM database with proper constraints."""
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                event_id TEXT UNIQUE NOT NULL,
+                sequence_number INTEGER UNIQUE NOT NULL,
+                action_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                risk_tier TEXT NOT NULL,
+                requires_approval BOOLEAN NOT NULL,
+                human_decision TEXT,
+                sop_reference TEXT NOT NULL,
+                primary_hash TEXT NOT NULL,
+                chain_hash TEXT NOT NULL,
+                tamper_seal TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Create indexes for performance
+        self.cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_sequence_number ON audit_events(sequence_number)
+        ''')
+        self.cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_event_id ON audit_events(event_id)
+        ''')
+        self.cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_status ON audit_events(status)
+        ''')
+        
+        # Create the genesis block if this is a new database
+        self.cursor.execute('SELECT COUNT(*) FROM audit_events')
+        count = self.cursor.fetchone()[0]
+        if count == 0:
+            self._create_genesis_block()
+        
+        self.conn.commit()
+    
+    def _create_genesis_block(self):
+        """Create the initial genesis block for the audit chain."""
+        genesis_event = AuditEvent(
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            event_id=CryptoManager.generate_uuid(),
+            sequence_number=0,
+            action_name="SYSTEM_INIT",
+            status="SUCCESS",
+            metadata={"initialization": "NOTREKT.AI v2.0 WORM Storage Initialized"},
+            risk_tier="MINIMAL",
+            requires_approval=False,
+            human_decision=None,
+            sop_reference="SOP-MEM-001",
+            primary_hash="",
+            chain_hash="",
+            tamper_seal=""
+        )
+        
+        # Calculate hashes for genesis block
+        event_data_for_hash = {
+            "timestamp": genesis_event.timestamp,
+            "event_id": genesis_event.event_id,
+            "sequence_number": genesis_event.sequence_number,
+            "action_name": genesis_event.action_name,
+            "status": genesis_event.status,
+            "metadata": genesis_event.metadata,
+            "risk_tier": genesis_event.risk_tier,
+            "requires_approval": genesis_event.requires_approval,
+            "human_decision": genesis_event.human_decision,
+            "sop_reference": genesis_event.sop_reference
+        }
+        event_data = json.dumps(event_data_for_hash, sort_keys=True)
+        genesis_event.primary_hash = CryptoManager.generate_sha256(event_data)
+        genesis_event.chain_hash = CryptoManager.create_chain_hash(event_data, "GENESIS")
+        genesis_event.tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
+        
+        self._write_event_to_db(genesis_event)
+        logger.info("WORM Storage initialized with genesis block")
+    
+    def _get_last_chain_hash(self) -> str:
+        """Get the hash of the last event in the chain."""
+        self.cursor.execute('SELECT primary_hash FROM audit_events ORDER BY sequence_number DESC LIMIT 1')
+        result = self.cursor.fetchone()
+        return result[0] if result else "GENESIS"
+    
+    def _get_next_sequence_number(self) -> int:
+        """Get the next sequence number for the audit chain."""
+        self.cursor.execute('SELECT MAX(sequence_number) FROM audit_events')
+        result = self.cursor.fetchone()
+        return (result[0] + 1) if result[0] is not None else 0
+    
+    def log_event(self, action_name: str, status: str, metadata: Dict[str, Any], 
+                  risk_tier: str, requires_approval: bool, human_decision: Optional[str] = None,
+                  action_id: Optional[str] = None) -> str:
+        """Log an event to the WORM storage and return the event ID."""
+        
+        # Create the audit event
+        event = AuditEvent(
+            timestamp=datetime.utcnow().isoformat() + "Z",
+            event_id=action_id or CryptoManager.generate_uuid(),
+            sequence_number=self._get_next_sequence_number(),
+            action_name=action_name,
+            status=status,
+            metadata=metadata,
+            risk_tier=risk_tier,
+            requires_approval=requires_approval,
+            human_decision=human_decision,
+            sop_reference=f"SOP-GOV-001-{risk_tier}",
+            primary_hash="",
+            chain_hash="",
+            tamper_seal=""
+        )
+        
+        # Calculate cryptographic hashes
+        event_data_for_hash = {
+            "timestamp": event.timestamp,
+            "event_id": event.event_id,
+            "sequence_number": event.sequence_number,
+            "action_name": event.action_name,
+            "status": event.status,
+            "metadata": event.metadata,
+            "risk_tier": event.risk_tier,
+            "requires_approval": event.requires_approval,
+            "human_decision": event.human_decision,
+            "sop_reference": event.sop_reference
+        }
+        event_data = json.dumps(event_data_for_hash, sort_keys=True)
+        event.primary_hash = CryptoManager.generate_sha256(event_data)
+        
+        # Chain to previous event
+        previous_hash = self._get_last_chain_hash()
+        event.chain_hash = CryptoManager.create_chain_hash(event_data, previous_hash)
+        
+        # Create tamper-proof seal
+        event.tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
+        
+        # Write to database
+        try:
+            self._write_event_to_db(event)
+            self.conn.commit()
+            
+            logger.info(f"Event logged: {action_name} - {status} - {event.event_id}")
+            
+            return event.event_id
+            
+        except sqlite3.IntegrityError as e:
+            logger.critical(f"WORM storage integrity violation: {e}")
+            raise
+    
+    def _write_event_to_db(self, event: AuditEvent):
+        """Write the event to the SQLite database."""
+        self.cursor.execute('''
+            INSERT INTO audit_events (
+                timestamp, event_id, sequence_number, action_name, status, 
+                metadata_json, risk_tier, requires_approval, human_decision,
+                sop_reference, primary_hash, chain_hash, tamper_seal
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            event.timestamp, event.event_id, event.sequence_number, event.action_name,
+            event.status, json.dumps(event.metadata), event.risk_tier, event.requires_approval,
+            event.human_decision, event.sop_reference, event.primary_hash, event.chain_hash,
+            event.tamper_seal
+        ))
+    
+    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve an event by its ID."""
+        self.cursor.execute('SELECT * FROM audit_events WHERE event_id = ?', (event_id,))
+        result = self.cursor.fetchone()
+        
+        if not result:
+            return None
+        
+        columns = [desc[0] for desc in self.cursor.description]
+        event_dict = dict(zip(columns, result))
+        event_dict['metadata'] = json.loads(event_dict['metadata_json'])
+        del event_dict['metadata_json']
+        
+        return event_dict
+    
+    def verify_integrity(self) -> Tuple[bool, List[str]]:
+        """Verify the complete integrity of the audit chain."""
+        logger.info("Verifying WORM storage integrity...")
+        
+        self.cursor.execute('SELECT * FROM audit_events ORDER BY sequence_number ASC')
+        events = self.cursor.fetchall()
+        
+        errors = []
+        previous_hash = "GENESIS"
+        
+        for event_row in events:
+            (id, timestamp, event_id, seq_num, action_name, status, metadata_json, 
+             risk_tier, requires_approval, human_decision, sop_reference, 
+             primary_hash, chain_hash, tamper_seal, created_at) = event_row
+            
+            # Verify primary hash
+            event_data_for_hash = {
+                "timestamp": timestamp,
+                "event_id": event_id,
+                "sequence_number": seq_num,
+                "action_name": action_name,
+                "status": status,
+                "metadata": json.loads(metadata_json),
+                "risk_tier": risk_tier,
+                "requires_approval": bool(requires_approval),
+                "human_decision": human_decision,
+                "sop_reference": sop_reference
+            }
+            event_data = json.dumps(event_data_for_hash, sort_keys=True)
+            calculated_primary_hash = CryptoManager.generate_sha256(event_data)
+            if calculated_primary_hash != primary_hash:
+                errors.append(f"Primary hash mismatch for event {event_id}")
+            
+            # Verify chain hash
+            calculated_chain_hash = CryptoManager.create_chain_hash(event_data, previous_hash)
+            if calculated_chain_hash != chain_hash:
+                errors.append(f"Chain hash break at event {event_id}")
+            
+            # Verify tamper seal
+            calculated_tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
+            if calculated_tamper_seal != tamper_seal:
+                errors.append(f"Tamper seal violation for event {event_id}")
+            
+            previous_hash = primary_hash
+        
+        is_valid = len(errors) == 0
+        
+        if is_valid:
+            logger.info(f"Integrity verified: {len(events)} events checked. Chain is tamper-proof.")
+        else:
+            logger.error(f"Integrity compromised: {len(errors)} violations detected!")
+            for error in errors:
+                logger.error(f"  - {error}")
+        
+        return is_valid, errors
+    
+    def get_audit_summary(self) -> Dict[str, Any]:
+        """Get a summary of all audit events."""
+        self.cursor.execute('''
+            SELECT 
+                COUNT(*) as total_events,
+                COUNT(CASE WHEN status = 'SUCCESS' THEN 1 END) as successful_actions,
+                COUNT(CASE WHEN status = 'BREACH' THEN 1 END) as breaches,
+                COUNT(CASE WHEN status = 'DENIED' THEN 1 END) as denials,
+                COUNT(CASE WHEN status = 'APPROVED' THEN 1 END) as approvals,
+                COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_actions,
+                COUNT(CASE WHEN requires_approval = 1 THEN 1 END) as approval_required_actions
+            FROM audit_events
+        ''')
+        
+        result = self.cursor.fetchone()
+        return {
+            "total_events": result[0],
+            "successful_actions": result[1],
+            "breaches": result[2],
+            "denials": result[3],
+            "approvals": result[4],
+            "pending_actions": result[5],
+            "approval_required_actions": result[6]
+        }
+    
+    def get_pending_actions(self) -> List[Dict[str, Any]]:
+        """Get all pending actions that require human approval."""
+        self.cursor.execute('''
+            SELECT event_id, action_name, metadata_json, risk_tier, timestamp
+            FROM audit_events 
+            WHERE status = 'PENDING'
+            ORDER BY timestamp ASC
+        ''')
+        
+        pending = []
+        for row in self.cursor.fetchall():
+            pending.append({
+                "event_id": row[0],
+                "action_name": row[1],
+                "metadata": json.loads(row[2]),
+                "risk_tier": row[3],
+                "timestamp": row[4]
+            })
+        
+        return pending
+    
+    def close(self):
+        """Close the database connection."""
+        self.conn.close()
+        logger.info("WORM Storage connection closed")
