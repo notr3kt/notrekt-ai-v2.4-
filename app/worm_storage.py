@@ -171,60 +171,62 @@ class WORMStorage:
     def log_event(self, action_name: str, status: str, metadata: Dict[str, Any], 
                   risk_tier: str, requires_approval: bool, human_decision: Optional[str] = None,
                   action_id: Optional[str] = None) -> str:
-        """Log an event to the WORM storage and return the event ID."""
-        
-        # Create the audit event
-        event = AuditEvent(
-            timestamp=datetime.utcnow().isoformat() + "Z",
-            event_id=action_id or CryptoManager.generate_uuid(),
-            sequence_number=self._get_next_sequence_number(),
-            action_name=action_name,
-            status=status,
-            metadata=metadata,
-            risk_tier=risk_tier,
-            requires_approval=requires_approval,
-            human_decision=human_decision,
-            sop_reference=f"SOP-GOV-001-{risk_tier}",
-            primary_hash="",
-            chain_hash="",
-            tamper_seal=""
-        )
-        
-        # Calculate cryptographic hashes
-        event_data_for_hash = {
-            "timestamp": event.timestamp,
-            "event_id": event.event_id,
-            "sequence_number": event.sequence_number,
-            "action_name": event.action_name,
-            "status": event.status,
-            "metadata": event.metadata,
-            "risk_tier": event.risk_tier,
-            "requires_approval": event.requires_approval,
-            "human_decision": event.human_decision,
-            "sop_reference": event.sop_reference
-        }
-        event_data = json.dumps(event_data_for_hash, sort_keys=True)
-        event.primary_hash = CryptoManager.generate_sha256(event_data)
-        
-        # Chain to previous event
-        previous_hash = self._get_last_chain_hash()
-        event.chain_hash = CryptoManager.create_chain_hash(event_data, previous_hash)
-        
-        # Create tamper-proof seal
-        event.tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
-        
-        # Write to database
-        try:
-            self._write_event_to_db(event)
-            self.conn.commit()
-            
-            logger.info(f"Event logged: {action_name} - {status} - {event.event_id}")
-            
-            return event.event_id
-            
-        except sqlite3.IntegrityError as e:
-            logger.critical(f"WORM storage integrity violation: {e}")
-            raise
+        """Log an event to the WORM storage and return the event ID. Robust against concurrency and ensures unique sequence_number."""
+        import threading, time
+        lock = threading.Lock()
+        max_retries = 5
+        for attempt in range(max_retries):
+            with lock:
+                try:
+                    self.conn.execute('BEGIN IMMEDIATE')
+                    sequence_number = self._get_next_sequence_number()
+                    event_id = action_id or CryptoManager.generate_uuid()
+                    event = AuditEvent(
+                        timestamp=datetime.utcnow().isoformat() + "Z",
+                        event_id=event_id,
+                        sequence_number=sequence_number,
+                        action_name=action_name,
+                        status=status,
+                        metadata=metadata,
+                        risk_tier=risk_tier,
+                        requires_approval=requires_approval,
+                        human_decision=human_decision,
+                        sop_reference=f"SOP-GOV-001-{risk_tier}",
+                        primary_hash="",
+                        chain_hash="",
+                        tamper_seal=""
+                    )
+                    event_data_for_hash = {
+                        "timestamp": event.timestamp,
+                        "event_id": event.event_id,
+                        "sequence_number": event.sequence_number,
+                        "action_name": event.action_name,
+                        "status": event.status,
+                        "metadata": event.metadata,
+                        "risk_tier": event.risk_tier,
+                        "requires_approval": event.requires_approval,
+                        "human_decision": event.human_decision,
+                        "sop_reference": event.sop_reference
+                    }
+                    event_data = json.dumps(event_data_for_hash, sort_keys=True)
+                    event.primary_hash = CryptoManager.generate_sha256(event_data)
+                    previous_hash = self._get_last_chain_hash()
+                    event.chain_hash = CryptoManager.create_chain_hash(event_data, previous_hash)
+                    event.tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
+                    self._write_event_to_db(event)
+                    self.conn.commit()
+                    logger.info(f"Event logged: {action_name} - {status} - {event.event_id}")
+                    return event.event_id
+                except sqlite3.IntegrityError as e:
+                    self.conn.rollback()
+                    logger.warning(f"WORM storage integrity violation (attempt {attempt+1}): {e}")
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                except Exception as e:
+                    self.conn.rollback()
+                    logger.error(f"Unexpected error during WORM event logging: {e}")
+                    raise
+        raise RuntimeError("Failed to log event after multiple retries due to concurrency/integrity errors.")
     
     def _write_event_to_db(self, event: AuditEvent):
         """Write the event to the SQLite database."""
@@ -338,14 +340,13 @@ class WORMStorage:
         }
     
     def get_pending_actions(self) -> List[Dict[str, Any]]:
-        """Get all pending actions that require human approval."""
+        """Get all pending actions that require human approval from persistent storage."""
         self.cursor.execute('''
             SELECT event_id, action_name, metadata_json, risk_tier, timestamp
             FROM audit_events 
             WHERE status = 'PENDING'
             ORDER BY timestamp ASC
         ''')
-        
         pending = []
         for row in self.cursor.fetchall():
             pending.append({
@@ -355,7 +356,6 @@ class WORMStorage:
                 "risk_tier": row[3],
                 "timestamp": row[4]
             })
-        
         return pending
     
     def close(self):

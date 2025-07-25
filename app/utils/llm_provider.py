@@ -1,12 +1,125 @@
+
 """
 llm_provider.py - Abstracts LLM API calls to support multiple vendors and open-source models.
 SOP-ARC-003
 """
-class LLMProvider:
-    def __init__(self, provider_name, config):
-        self.provider_name = provider_name
-        self.config = config
 
-    def generate(self, prompt):
-        # [GAP: Route to correct LLM API or local model]
-        return "[GAP: LLM output not implemented]"
+import os
+import requests
+import json
+import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+class LLMProvider:
+    """
+    Centralized provider for interacting with various Large Language Models.
+    Manages API keys, model selection, and basic error handling.
+    """
+    _api_key = os.getenv("GEMINI_API_KEY", "")
+
+    @classmethod
+    def _make_api_call(cls, model_name: str, contents: list, generation_config: dict = None, response_schema: dict = None) -> str:
+        """
+        Internal method to make a generic API call to the Google Generative Language API.
+        Args:
+            model_name (str): The specific Gemini model to use (e.g., "gemini-1.5-pro", "gemini-2.0-flash").
+            contents (list): The chat history/content payload for the model.
+            generation_config (dict, optional): Configuration for generation (temperature, topK, etc.).
+            response_schema (dict, optional): Schema for structured responses.
+        Returns:
+            str: The generated text response from the LLM, or an error message.
+        """
+        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={cls._api_key}"
+        
+        payload = {"contents": contents}
+        if generation_config:
+            payload["generationConfig"] = generation_config
+        if response_schema:
+            payload["generationConfig"] = payload.get("generationConfig", {}) # Ensure generationConfig exists
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+            payload["generationConfig"]["responseSchema"] = response_schema
+
+        headers = {'Content-Type': 'application/json'}
+
+        try:
+            logging.info(f"Calling LLM: {model_name} with payload (truncated): {json.dumps(payload)[:200]}...")
+            response = requests.post(api_url, headers=headers, data=json.dumps(payload))
+            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+            
+            result = response.json()
+            
+            if result.get("candidates") and result["candidates"][0].get("content") and result["candidates"][0]["content"].get("parts"):
+                text_response = result["candidates"][0]["content"]["parts"][0]["text"]
+                logging.info(f"LLM {model_name} call successful.")
+                return text_response
+            else:
+                logging.warning(f"LLM {model_name} call successful but no content found in response: {result}")
+                return "[GAP: LLM response structure unexpected or empty]"
+        except requests.exceptions.RequestException as e:
+            logging.error(f"LLM {model_name} API call failed: {e}")
+            return f"[GAP: LLM API call error: {e}]"
+        except json.JSONDecodeError as e:
+            logging.error(f"LLM {model_name} API response not valid JSON: {e}")
+            return f"[GAP: LLM API response error: Invalid JSON]"
+        except Exception as e:
+            logging.error(f"An unexpected error occurred during LLM {model_name} call: {e}")
+            return f"[GAP: Unexpected LLM error: {e}]"
+
+    @classmethod
+    def generate_text(cls, prompt: str, model_type: str = "flash", generation_config: dict = None) -> str:
+        """
+        Generates text using the specified Gemini model.
+        Args:
+            prompt (str): The input prompt for the LLM.
+            model_type (str): "flash" for gemini-1.5-flash (default), "pro" for gemini-1.5-pro.
+            generation_config (dict, optional): Custom generation configuration.
+        Returns:
+            str: The generated text.
+        """
+        model_name = "gemini-1.5-flash" if model_type == "flash" else "gemini-1.5-pro"
+        contents = [{"role": "user", "parts": [{"text": prompt}]}]
+        return cls._make_api_call(model_name, contents, generation_config)
+
+    @classmethod
+    def generate_structured_response(cls, prompt: str, response_schema: dict, model_type: str = "flash", generation_config: dict = None) -> str:
+        """
+        Generates a structured (JSON) response using the specified Gemini model.
+        Args:
+            prompt (str): The input prompt.
+            response_schema (dict): The JSON schema for the desired response.
+            model_type (str): "flash" or "pro".
+            generation_config (dict, optional): Custom generation configuration.
+        Returns:
+            str: The generated JSON string.
+        """
+        model_name = "gemini-1.5-flash" if model_type == "flash" else "gemini-1.5-pro"
+        contents = [{"role": "user", "parts": [{"text": prompt}]}]
+        return cls._make_api_call(model_name, contents, generation_config, response_schema)
+
+    @classmethod
+    def generate_multimodal_response(cls, prompt: str, base64_image: str, mime_type: str = "image/png", model_type: str = "pro", generation_config: dict = None) -> str:
+        """
+        Generates a response from a multimodal prompt (text + image).
+        Args:
+            prompt (str): The text prompt.
+            base64_image (str): Base64 encoded image data.
+            mime_type (str): MIME type of the image (e.g., "image/png", "image/jpeg").
+            model_type (str): "pro" for gemini-1.5-pro (default).
+            generation_config (dict, optional): Custom generation configuration.
+        Returns:
+            str: The generated text response.
+        """
+        model_name = "gemini-1.5-pro" # Multimodal typically requires Pro model
+        contents = [
+            {"role": "user", "parts": [
+                {"text": prompt},
+                {"inlineData": {"mimeType": mime_type, "data": base64_image}}
+            ]}
+        ]
+        return cls._make_api_call(model_name, contents, generation_config)

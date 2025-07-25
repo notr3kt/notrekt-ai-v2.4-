@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import pickle
 
+
 # Optional dependencies for RAG functionality
 DEPENDENCIES_AVAILABLE = True
 np = None
@@ -57,6 +58,33 @@ except ImportError as e:
     faiss = DummyFaiss
 
 from .config_manager import Config, logger
+
+# --- RAG Answer Synthesis and [GAP] Handling ---
+def synthesize_answer(query: str, search_results: list) -> dict:
+    """
+    Synthesize a coherent answer from search results, with source citations.
+    If no verifiable answer, return a [GAP] marker.
+    """
+    if not search_results:
+        return {
+            "answer": "[GAP: No verifiable answer found for query]",
+            "sources": [],
+            "status": "gap"
+        }
+    # Example: concatenate top results with citations
+    answer_parts = []
+    sources = []
+    for res in search_results:
+        snippet = res.get("snippet") or res.get("text") or str(res)
+        source = res.get("source") or res.get("doc_id") or "unknown"
+        answer_parts.append(f"{snippet} (source: {source})")
+        sources.append(source)
+    answer = "\n".join(answer_parts)
+    return {
+        "answer": answer,
+        "sources": sources,
+        "status": "ok"
+    }
 
 @dataclass
 class Document:
@@ -411,6 +439,46 @@ class VectorStore:
             return content[:400] + "..." if len(content) > 400 else content
 
 class ResearchAgent:
+    def answer(self, query: str, retrieved_sources: list) -> dict:
+        """
+        Synthesize a response using only retrieved_sources and LLMProvider.
+        If answer is not verifiable, return [GAP] and confidence_score.
+        """
+        from .utils.llm_provider import LLMProvider
+        if not retrieved_sources:
+            return {
+                "answer": "[GAP: Clarification Needed - No verifiable source found for this query]",
+                "confidence_score": 0,
+                "sources": [],
+                "query": query
+            }
+        # Concatenate sources for LLM prompt
+        sources_text = "\n---\n".join(retrieved_sources)
+        prompt = (
+            f"You are a research assistant. Answer the following query strictly using only the provided sources.\n"
+            f"If the answer is not directly verifiable, respond with '[GAP: Clarification Needed - No verifiable source found for this query]'.\n"
+            f"Query: {query}\n"
+            f"Sources:\n{sources_text}\n"
+            f"Answer:"
+        )
+        llm = LLMProvider("gemini", {})
+        answer = llm.generate(prompt)
+        # Confidence: crude heuristic—if answer contains a direct quote or matches a source, high; else, low
+        confidence = 0
+        for src in retrieved_sources:
+            if src.strip() and src.strip() in answer:
+                confidence = 100
+                break
+        if confidence == 0 and "[GAP" in answer:
+            confidence = 0
+        elif confidence == 0:
+            confidence = 50
+        return {
+            "answer": answer,
+            "confidence_score": confidence,
+            "sources": retrieved_sources,
+            "query": query
+        }
     """
     Zero-Guessing Research Agent that provides answers grounded only in trusted sources.
     """

@@ -17,7 +17,16 @@ from jose import JWTError, jwt
 from pydantic import BaseModel
 from typing import Optional
 
-# [GAP: import governance/agents/utilities as modularized]
+
+# Modular imports
+from app.governance import GovernanceCore
+from app.worm_storage import WORMStorage
+from app.rag_system import ResearchAgent
+from app.verifier_agent import VerifierAgent
+from app.agents.integrity_agent import IntegrityAgent
+from app.agents.hitl_agent import HITLAgent
+from app.utils.rag_utils import log_rag_sources, detect_context_drift
+from app.utils.llm_provider import LLMProvider
 
 app = FastAPI(title="NOTREKT.AI Governance API", version="2.0")
 
