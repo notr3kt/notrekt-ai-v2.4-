@@ -48,3 +48,22 @@ MIT License
 ---
 
 *For more details, see the Master SOP and in-code documentation.*
+
+---
+
+## Version Summary & Next Steps
+
+**v2.1:** A strong, modular prototype with core features and some [GAP]s.
+
+**v2.2:** A clean, open source–ready, governance-compliant release with improved documentation, explicit [GAP] tracking, and a structure that’s easier for new users, contributors, and auditors.
+
+**Next Steps for v2.3:**
+To move from v2.2 to a truly production-ready system, focus on:
+
+- Fixing the WORM storage integrity bug
+- Implementing core RAG and VerifierAgent logic
+- Filling all [GAP]s in agent and utility modules
+- Migrating in-memory state to persistent storage
+- Enhancing cryptographic and audit features
+
+This will ensure NOTREKT.AI delivers on its promise of “brutal governance,” auditability, and security.
