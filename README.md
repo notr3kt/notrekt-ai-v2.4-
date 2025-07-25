@@ -1,13 +1,33 @@
+<<<<<<< HEAD
 # NOTREKT.AI v2.3 (Latest Development Release)
 
 **This is the latest development version of NOTREKT.AI, based on the open source release.**
+=======
+# NOTREKT.AI v2.2 (Open Source Release)
+
+**This is the open source–ready version of NOTREKT.AI.**
+
+---
+
+**Versioning:**
+- v2.1: Original, pre–open source version (internal/private)
+- v2.2: Open source–compliant version (this folder)
+- v2.3: Latest development version (based on v2.2)
+
+---
+
+>>>>>>> da716ee1b8b301acc885a9e7658c1e9830b6243b
 
 **Next-Generation AI Governance, Audit, and Compliance System**
 
 ---
 
 ## Overview
+<<<<<<< HEAD
 NOTREKT.AI v2.3 is a production-grade, modular, and fully auditable AI governance platform. It features:
+=======
+NOTREKT.AI v2.2 is a production-grade, modular, and fully auditable AI governance platform. It features:
+>>>>>>> da716ee1b8b301acc885a9e7658c1e9830b6243b
 - Secure, cryptographically chained WORM audit logging
 - Human-in-the-Loop (HITL) workflows
 - Modular agent architecture (governance, code, research, integrity, HITL)
@@ -68,3 +88,22 @@ MIT License
 ---
 
 *For more details, see the Master SOP and in-code documentation.*
+
+---
+
+## Version Summary & Next Steps
+
+**v2.1:** A strong, modular prototype with core features and some [GAP]s.
+
+**v2.2:** A clean, open source–ready, governance-compliant release with improved documentation, explicit [GAP] tracking, and a structure that’s easier for new users, contributors, and auditors.
+
+**Next Steps for v2.3:**
+To move from v2.2 to a truly production-ready system, focus on:
+
+- Fixing the WORM storage integrity bug
+- Implementing core RAG and VerifierAgent logic
+- Filling all [GAP]s in agent and utility modules
+- Migrating in-memory state to persistent storage
+- Enhancing cryptographic and audit features
+
+This will ensure NOTREKT.AI delivers on its promise of “brutal governance,” auditability, and security.
