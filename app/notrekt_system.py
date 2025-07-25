@@ -46,8 +46,61 @@ class NotRektAISystem:
         self.worm_storage = WORMStorage()
         self.cgo_agent = CGOAgent()
         
-        # In-memory storage for pending actions (in production, use Redis or database)
-        self.pending_actions: Dict[str, PendingAction] = {}
+        # Persistent storage for pending actions (production: use DB, here: SQLite table)
+        self._init_pending_actions_table()
+    def _init_pending_actions_table(self):
+        # Create a table for pending actions if it doesn't exist
+        try:
+            self.worm_storage.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pending_actions (
+                    action_id TEXT PRIMARY KEY,
+                    action_name TEXT,
+                    metadata_json TEXT,
+                    risk_tier TEXT,
+                    timestamp TEXT,
+                    validation_result_json TEXT,
+                    user_context_json TEXT
+                )
+            ''')
+            self.worm_storage.conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to initialize pending_actions table: {e}")
+
+    def _db_add_pending_action(self, action_id, action_name, metadata, risk_tier, timestamp, validation_result, user_context):
+        import json
+        self.worm_storage.cursor.execute(
+            'INSERT OR REPLACE INTO pending_actions (action_id, action_name, metadata_json, risk_tier, timestamp, validation_result_json, user_context_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (
+                action_id,
+                action_name,
+                json.dumps(metadata),
+                risk_tier,
+                timestamp,
+                json.dumps(validation_result.__dict__ if hasattr(validation_result, '__dict__') else dict(validation_result)),
+                json.dumps(user_context)
+            )
+        )
+        self.worm_storage.conn.commit()
+
+    def _db_get_pending_action(self, action_id):
+        import json
+        cur = self.worm_storage.cursor.execute('SELECT * FROM pending_actions WHERE action_id = ?', (action_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "action_id": row[0],
+            "action_name": row[1],
+            "metadata": json.loads(row[2]),
+            "risk_tier": row[3],
+            "timestamp": row[4],
+            "validation_result": json.loads(row[5]),
+            "user_context": json.loads(row[6])
+        }
+
+    def _db_remove_pending_action(self, action_id):
+        self.worm_storage.cursor.execute('DELETE FROM pending_actions WHERE action_id = ?', (action_id,))
+        self.worm_storage.conn.commit()
         
         logger.info("NOTREKT.AI v2.0 System ready")
         logger.info("🔒 Governance Layer: ACTIVE")
@@ -75,14 +128,18 @@ class NotRektAISystem:
         action_id = str(uuid.uuid4())
         
         logger.info(f"Processing action: {action_name} (ID: {action_id})")
-        
+        # Modular agent dispatch
+        self.agents = {
+            "RESEARCH": getattr(self, "research_agent", None),
+            "WRITE_CODE": getattr(self, "code_agent", None),
+            "DATA_ANALYSIS": getattr(self, "data_agent", None),
+            # Add more as needed
+        }
         # STEP 1: GOVERN - CGO Agent Validation
         validation_result = self.cgo_agent.validate_action(action_name, metadata, user_context)
-        
         # Handle blocked actions
         if validation_result.blocked:
             logger.warning(f"Action blocked: {validation_result.reasoning}")
-            
             event_id = self.worm_storage.log_event(
                 action_name=action_name,
                 status="BREACH",
@@ -95,7 +152,6 @@ class NotRektAISystem:
                 requires_approval=validation_result.requires_approval,
                 action_id=action_id
             )
-            
             return {
                 "status": "blocked",
                 "action_id": action_id,
@@ -103,11 +159,9 @@ class NotRektAISystem:
                 "message": validation_result.reasoning,
                 "risk_tier": validation_result.risk_tier
             }
-        
         # Handle validation failures
         if not validation_result.is_valid:
             logger.warning(f"Validation failed: {validation_result.reasoning}")
-            
             event_id = self.worm_storage.log_event(
                 action_name=action_name,
                 status="BREACH",
@@ -121,7 +175,6 @@ class NotRektAISystem:
                 requires_approval=validation_result.requires_approval,
                 action_id=action_id
             )
-            
             return {
                 "status": "validation_failed",
                 "action_id": action_id,
@@ -130,26 +183,20 @@ class NotRektAISystem:
                 "missing_metadata": validation_result.missing_metadata,
                 "risk_tier": validation_result.risk_tier
             }
-        
         logger.info(f"CGO validation passed - Risk Tier: {validation_result.risk_tier}")
-        
         # STEP 2: HUMAN-IN-THE-LOOP (HITL) - If Required
         if validation_result.requires_approval:
             logger.info(f"Action requires human approval - queuing for review")
-            
-            # Store pending action
-            pending_action = PendingAction(
-                action_id=action_id,
-                action_name=action_name,
-                metadata=metadata,
-                risk_tier=validation_result.risk_tier,
-                timestamp=datetime.utcnow().isoformat() + "Z",
-                validation_result=validation_result,
-                user_context=user_context
+            timestamp = datetime.utcnow().isoformat() + "Z"
+            self._db_add_pending_action(
+                action_id,
+                action_name,
+                metadata,
+                validation_result.risk_tier,
+                timestamp,
+                validation_result,
+                user_context
             )
-            
-            self.pending_actions[action_id] = pending_action
-            
             # Log pending status
             event_id = self.worm_storage.log_event(
                 action_name=action_name,
@@ -163,7 +210,6 @@ class NotRektAISystem:
                 requires_approval=True,
                 action_id=action_id
             )
-            
             return {
                 "status": "pending_approval",
                 "action_id": action_id,
@@ -172,7 +218,6 @@ class NotRektAISystem:
                 "risk_tier": validation_result.risk_tier,
                 "approval_required": True
             }
-        
         # STEP 3: AUTO-EXECUTE for low-risk actions
         return await self._execute_action(action_id, action_name, metadata, validation_result, user_context)
     
@@ -190,14 +235,13 @@ class NotRektAISystem:
             human_decision: "APPROVE" or "DENY"
             approver_context: Context about the approver (role, ID, etc.)
         """
-        if action_id not in self.pending_actions:
+        pending_action = self._db_get_pending_action(action_id)
+        if not pending_action:
             logger.error(f"Action ID not found in pending actions: {action_id}")
             return {
                 "status": "error",
                 "message": f"Action ID {action_id} not found in pending actions"
             }
-
-        pending_action = self.pending_actions[action_id]
 
         logger.info(f"Processing human decision for action {action_id}: {human_decision}")
 
@@ -220,7 +264,7 @@ class NotRektAISystem:
         )
 
         # Remove from pending actions
-        del self.pending_actions[action_id]
+        self._db_remove_pending_action(action_id)
 
         if human_decision.upper() == "DENY":
             logger.info(f"Action {action_id} denied by human reviewer")
@@ -235,10 +279,10 @@ class NotRektAISystem:
         logger.info(f"Action {action_id} approved - executing...")
         return await self._execute_action(
             action_id,
-            pending_action.action_name,
-            pending_action.metadata,
-            pending_action.validation_result,
-            pending_action.user_context,
+            pending_action["action_name"],
+            pending_action["metadata"],
+            pending_action["validation_result"],
+            pending_action["user_context"],
             human_decision
         )
     
@@ -349,18 +393,20 @@ class NotRektAISystem:
             return f"Action '{action_name}' executed successfully with provided metadata."
     
     def get_pending_actions(self) -> List[Dict[str, Any]]:
-        """Get all actions pending human approval."""
+        """Get all actions pending human approval from DB."""
+        import json
+        cur = self.worm_storage.cursor.execute('SELECT * FROM pending_actions')
+        rows = cur.fetchall()
         pending_list = []
-        for action_id, pending_action in self.pending_actions.items():
+        for row in rows:
             pending_list.append({
-                "action_id": action_id,
-                "action_name": pending_action.action_name,
-                "metadata": pending_action.metadata,
-                "risk_tier": pending_action.risk_tier,
-                "timestamp": pending_action.timestamp,
-                "user_context": pending_action.user_context
+                "action_id": row[0],
+                "action_name": row[1],
+                "metadata": json.loads(row[2]),
+                "risk_tier": row[3],
+                "timestamp": row[4],
+                "user_context": json.loads(row[6])
             })
-        
         return sorted(pending_list, key=lambda x: x["timestamp"])
     
     def get_system_status(self) -> Dict[str, Any]:

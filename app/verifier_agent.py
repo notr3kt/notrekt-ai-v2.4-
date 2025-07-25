@@ -14,23 +14,25 @@ class VerifierAgent:
     def verify_output(self, ai_output_content: str, sources_used: list) -> tuple:
         """
         Use LLM to verify if ai_output_content is truly supported by sources_used.
-        Returns (True, None) if supported, else (False, reason).
+        Returns (is_valid, confidence, reason, breach_code)
         """
+        import json
         if not sources_used:
-            return False, "No sources provided for verification."
+            return False, 0, "No sources provided for verification.", "NO-SOURCES"
         sources_text = "\n---\n".join(sources_used)
         prompt = (
-            f"You are a fact-checking agent. Given the following AI output and sources, determine if every claim in the output is directly supported by the sources.\n"
-            f"If any claim is not supported, respond with 'UNSUPPORTED: <reason>'. If all claims are supported, respond with 'SUPPORTED'.\n"
-            f"AI Output:\n{ai_output_content}\n"
-            f"Sources:\n{sources_text}\n"
-            f"Result:"
+            "You are a fact-checking agent. Given the following AI output and sources, return JSON: "
+            '{"supported": true/false, "unsupported_claims": [list]}. '
+            "AI Output: " + ai_output_content + "\nSources: " + sources_text
         )
-        llm = LLMProvider("gemini", {})
-        result = llm.generate(prompt)
-        if result.strip().upper().startswith("SUPPORTED"):
-            return True, None
-        if result.strip().upper().startswith("UNSUPPORTED"):
-            reason = result.split(":", 1)[-1].strip() if ":" in result else "Claim not supported by sources."
-            return False, reason
-        return False, "Unable to determine support from LLM response."
+        llm = LLMProvider()
+        result = llm.generate_text(prompt, model_type="pro")
+        try:
+            parsed = json.loads(result)
+            is_valid = parsed.get("supported", False)
+            unsupported = parsed.get("unsupported_claims", [])
+            reason = "All claims supported." if is_valid else f"Unsupported claims: {unsupported}"
+            confidence = 95 if is_valid else 50
+            return is_valid, confidence, reason, None if is_valid else "UNSUPPORTED-CLAIMS"
+        except Exception:
+            return False, 0, "VerifierAgent: Invalid LLM response format.", "VERIFIER-ERROR"

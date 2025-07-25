@@ -23,15 +23,18 @@ class Config:
     SECRET_KEY: str = os.getenv('NOTREKT_SECRET_KEY', 'INSECURE_DEFAULT_CHANGE_ME')
     ENVIRONMENT: str = os.getenv('NOTREKT_ENVIRONMENT', 'development')
     
+    # Base directory for absolute path resolution
+    BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
+
     # Database Configuration  
-    WORM_DB_PATH: str = os.getenv('NOTREKT_WORM_DB_PATH', './data/notrekt_worm_audit.db')
-    
+    WORM_DB_PATH: str = os.path.abspath(os.getenv('NOTREKT_WORM_DB_PATH', os.path.join(BASE_DIR, '..', 'data', 'notrekt_worm_audit.db')))
+
     # Rules Configuration
-    RULES_PATH: str = os.getenv('NOTREKT_RULES_PATH', './config/rules.json')
-    
+    RULES_PATH: str = os.path.abspath(os.getenv('NOTREKT_RULES_PATH', os.path.join(BASE_DIR, '..', 'config', 'rules.json')))
+
     # RAG System Configuration
-    CORPUS_PATH: str = os.getenv('NOTREKT_CORPUS_PATH', './trusted_knowledge_corpus')
-    VECTOR_DB_PATH: str = os.getenv('NOTREKT_VECTOR_DB_PATH', './data/vector_store')
+    CORPUS_PATH: str = os.path.abspath(os.getenv('NOTREKT_CORPUS_PATH', os.path.join(BASE_DIR, '..', 'trusted_knowledge_corpus')))
+    VECTOR_DB_PATH: str = os.path.abspath(os.getenv('NOTREKT_VECTOR_DB_PATH', os.path.join(BASE_DIR, '..', 'data', 'vector_store')))
     
     # API Configuration
     API_HOST: str = os.getenv('NOTREKT_API_HOST', 'localhost')

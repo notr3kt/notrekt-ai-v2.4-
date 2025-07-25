@@ -246,6 +246,20 @@ class VectorStore:
             logger.error(f"Failed to extract text from {file_path}: {e}")
             return "", {"error": str(e)}
     
+    def _chunk_text(self, text, chunk_size=500):
+        import re
+        sentences = re.split(r'(?<=[.!?]) +', text)
+        chunks, current = [], ""
+        for s in sentences:
+            if len(current) + len(s) < chunk_size:
+                current += s + " "
+            else:
+                chunks.append(current.strip())
+                current = s + " "
+        if current:
+            chunks.append(current.strip())
+        return chunks
+
     def index_document(self, file_path: Path) -> Optional[str]:
         """
         Index a single document from file path.
@@ -254,65 +268,59 @@ class VectorStore:
         try:
             # Extract content and metadata
             content, file_metadata = self._extract_text_from_file(file_path)
-            
             if not content.strip():
                 logger.warning(f"No content extracted from {file_path}")
                 return None
-            
             # Calculate file hash for change detection
             file_hash = self._calculate_file_hash(file_path)
-            
             # Check if document already exists with same hash
             for doc in self.documents:
                 if doc.source_path == str(file_path) and doc.hash == file_hash:
                     logger.debug(f"Document unchanged, skipping: {file_path}")
                     return doc.id
-            
-            # Create document
+            # Chunk document
+            chunks = self._chunk_text(content)
             doc_id = hashlib.sha256(str(file_path).encode()).hexdigest()[:16]
-            document = Document(
-                id=doc_id,
-                title=file_path.stem,
-                content=content,
-                source_path=str(file_path),
-                metadata=file_metadata,
-                hash=file_hash,
-                indexed_at=datetime.utcnow().isoformat() + "Z"
-            )
-            
-            # Generate embedding
-            embedding = None
-            if self.model is not None and hasattr(self.model, 'encode'):
-                try:
-                    embedding = self.model.encode([content])
-                except Exception as e:
-                    logger.error(f"Embedding generation failed: {e}")
-                    embedding = None
-            # Normalize for cosine similarity and add to index
-            if embedding is not None and np is not None and hasattr(np, 'linalg'):
-                try:
-                    embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
-                    if self.index is not None and hasattr(self.index, 'add'):
-                        # Only call add if real faiss (module is 'faiss')
-                        # Only call add if real faiss IndexFlatIP (not dummy)
-                        real_faiss = False
-                        try:
-                            from faiss import IndexFlatIP  # type: ignore
-                            real_faiss = isinstance(self.index, IndexFlatIP)
-                        except ImportError:
+            for idx, chunk in enumerate(chunks):
+                chunk_id = f"{doc_id}_{idx}"
+                document = Document(
+                    id=chunk_id,
+                    title=f"{file_path.stem}_chunk{idx}",
+                    content=chunk,
+                    source_path=str(file_path),
+                    metadata=file_metadata,
+                    hash=file_hash,
+                    indexed_at=datetime.utcnow().isoformat() + "Z"
+                )
+                # Generate embedding
+                embedding = None
+                if self.model is not None and hasattr(self.model, 'encode'):
+                    try:
+                        embedding = self.model.encode([chunk])
+                    except Exception as e:
+                        logger.error(f"Embedding generation failed: {e}")
+                        embedding = None
+                # Normalize for cosine similarity and add to index
+                if embedding is not None and np is not None and hasattr(np, 'linalg'):
+                    try:
+                        embedding = embedding / np.linalg.norm(embedding, axis=1, keepdims=True)
+                        if self.index is not None and hasattr(self.index, 'add'):
                             real_faiss = False
-                        if real_faiss:
                             try:
-                                self.index.add(embedding.astype('float32'))  # type: ignore[attr-defined]
-                            except Exception as e:
-                                logger.error(f"Index add failed: {e}")
-                except Exception as e:
-                    logger.error(f"Embedding normalization or index add failed: {e}")
-            self.documents.append(document)
-            
-            logger.info(f"Indexed document: {file_path} (ID: {doc_id})")
+                                from faiss import IndexFlatIP  # type: ignore
+                                real_faiss = isinstance(self.index, IndexFlatIP)
+                            except ImportError:
+                                real_faiss = False
+                            if real_faiss:
+                                try:
+                                    self.index.add(embedding.astype('float32'))  # type: ignore[attr-defined]
+                                except Exception as e:
+                                    logger.error(f"Index add failed: {e}")
+                    except Exception as e:
+                        logger.error(f"Embedding normalization or index add failed: {e}")
+                self.documents.append(document)
+            logger.info(f"Indexed document: {file_path} (ID: {doc_id}) with {len(chunks)} chunks")
             return doc_id
-            
         except Exception as e:
             logger.error(f"Failed to index document {file_path}: {e}")
             return None

@@ -27,16 +27,10 @@ class LLMProvider:
     def _make_api_call(cls, model_name: str, contents: list, generation_config: dict = None, response_schema: dict = None) -> str:
         """
         Internal method to make a generic API call to the Google Generative Language API.
-        Args:
-            model_name (str): The specific Gemini model to use (e.g., "gemini-1.5-pro", "gemini-2.0-flash").
-            contents (list): The chat history/content payload for the model.
-            generation_config (dict, optional): Configuration for generation (temperature, topK, etc.).
-            response_schema (dict, optional): Schema for structured responses.
-        Returns:
-            str: The generated text response from the LLM, or an error message.
+        Adds retry logic for transient errors.
         """
+        import time
         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={cls._api_key}"
-        
         payload = {"contents": contents}
         if generation_config:
             payload["generationConfig"] = generation_config
@@ -44,32 +38,33 @@ class LLMProvider:
             payload["generationConfig"] = payload.get("generationConfig", {}) # Ensure generationConfig exists
             payload["generationConfig"]["responseMimeType"] = "application/json"
             payload["generationConfig"]["responseSchema"] = response_schema
-
         headers = {'Content-Type': 'application/json'}
-
-        try:
-            logging.info(f"Calling LLM: {model_name} with payload (truncated): {json.dumps(payload)[:200]}...")
-            response = requests.post(api_url, headers=headers, data=json.dumps(payload))
-            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-            
-            result = response.json()
-            
-            if result.get("candidates") and result["candidates"][0].get("content") and result["candidates"][0]["content"].get("parts"):
-                text_response = result["candidates"][0]["content"]["parts"][0]["text"]
-                logging.info(f"LLM {model_name} call successful.")
-                return text_response
-            else:
-                logging.warning(f"LLM {model_name} call successful but no content found in response: {result}")
-                return "[GAP: LLM response structure unexpected or empty]"
-        except requests.exceptions.RequestException as e:
-            logging.error(f"LLM {model_name} API call failed: {e}")
-            return f"[GAP: LLM API call error: {e}]"
-        except json.JSONDecodeError as e:
-            logging.error(f"LLM {model_name} API response not valid JSON: {e}")
-            return f"[GAP: LLM API response error: Invalid JSON]"
-        except Exception as e:
-            logging.error(f"An unexpected error occurred during LLM {model_name} call: {e}")
-            return f"[GAP: Unexpected LLM error: {e}]"
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                logging.info(f"Calling LLM: {model_name} with payload (truncated): {json.dumps(payload)[:200]}...")
+                response = requests.post(api_url, headers=headers, data=json.dumps(payload))
+                response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                result = response.json()
+                if result.get("candidates") and result["candidates"][0].get("content") and result["candidates"][0]["content"].get("parts"):
+                    text_response = result["candidates"][0]["content"]["parts"][0]["text"]
+                    logging.info(f"LLM {model_name} call successful.")
+                    return text_response
+                else:
+                    logging.warning(f"LLM {model_name} call successful but no content found in response: {result}")
+                    return "[GAP: LLM response structure unexpected or empty]"
+            except requests.exceptions.RequestException as e:
+                logging.error(f"LLM {model_name} API call failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                return f"[GAP: LLM API call error: {e}]"
+            except json.JSONDecodeError as e:
+                logging.error(f"LLM {model_name} API response not valid JSON: {e}")
+                return f"[GAP: LLM API response error: Invalid JSON]"
+            except Exception as e:
+                logging.error(f"An unexpected error occurred during LLM {model_name} call: {e}")
+                return f"[GAP: Unexpected LLM error: {e}]"
 
     @classmethod
     def generate_text(cls, prompt: str, model_type: str = "flash", generation_config: dict = None) -> str:
@@ -82,7 +77,11 @@ class LLMProvider:
         Returns:
             str: The generated text.
         """
-        model_name = "gemini-1.5-flash" if model_type == "flash" else "gemini-1.5-pro"
+        GEMINI_MODELS = {
+            "flash": "gemini-1.5-flash",
+            "pro": "gemini-1.5-pro"
+        }
+        model_name = GEMINI_MODELS.get(model_type, "gemini-1.5-flash")
         contents = [{"role": "user", "parts": [{"text": prompt}]}]
         return cls._make_api_call(model_name, contents, generation_config)
 
@@ -98,7 +97,11 @@ class LLMProvider:
         Returns:
             str: The generated JSON string.
         """
-        model_name = "gemini-1.5-flash" if model_type == "flash" else "gemini-1.5-pro"
+        GEMINI_MODELS = {
+            "flash": "gemini-1.5-flash",
+            "pro": "gemini-1.5-pro"
+        }
+        model_name = GEMINI_MODELS.get(model_type, "gemini-1.5-flash")
         contents = [{"role": "user", "parts": [{"text": prompt}]}]
         return cls._make_api_call(model_name, contents, generation_config, response_schema)
 
@@ -115,7 +118,11 @@ class LLMProvider:
         Returns:
             str: The generated text response.
         """
-        model_name = "gemini-1.5-pro" # Multimodal typically requires Pro model
+        GEMINI_MODELS = {
+            "flash": "gemini-1.5-flash",
+            "pro": "gemini-1.5-pro"
+        }
+        model_name = GEMINI_MODELS.get(model_type, "gemini-1.5-pro")
         contents = [
             {"role": "user", "parts": [
                 {"text": prompt},

@@ -172,60 +172,58 @@ class WORMStorage:
                   risk_tier: str, requires_approval: bool, human_decision: Optional[str] = None,
                   action_id: Optional[str] = None) -> str:
         """Log an event to the WORM storage and return the event ID. Robust against concurrency and ensures unique sequence_number."""
-        import threading, time
-        lock = threading.Lock()
-        max_retries = 5
+        import time
+        max_retries = 7
         for attempt in range(max_retries):
-            with lock:
-                try:
-                    self.conn.execute('BEGIN IMMEDIATE')
-                    sequence_number = self._get_next_sequence_number()
-                    event_id = action_id or CryptoManager.generate_uuid()
-                    event = AuditEvent(
-                        timestamp=datetime.utcnow().isoformat() + "Z",
-                        event_id=event_id,
-                        sequence_number=sequence_number,
-                        action_name=action_name,
-                        status=status,
-                        metadata=metadata,
-                        risk_tier=risk_tier,
-                        requires_approval=requires_approval,
-                        human_decision=human_decision,
-                        sop_reference=f"SOP-GOV-001-{risk_tier}",
-                        primary_hash="",
-                        chain_hash="",
-                        tamper_seal=""
-                    )
-                    event_data_for_hash = {
-                        "timestamp": event.timestamp,
-                        "event_id": event.event_id,
-                        "sequence_number": event.sequence_number,
-                        "action_name": event.action_name,
-                        "status": event.status,
-                        "metadata": event.metadata,
-                        "risk_tier": event.risk_tier,
-                        "requires_approval": event.requires_approval,
-                        "human_decision": event.human_decision,
-                        "sop_reference": event.sop_reference
-                    }
-                    event_data = json.dumps(event_data_for_hash, sort_keys=True)
-                    event.primary_hash = CryptoManager.generate_sha256(event_data)
-                    previous_hash = self._get_last_chain_hash()
-                    event.chain_hash = CryptoManager.create_chain_hash(event_data, previous_hash)
-                    event.tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
-                    self._write_event_to_db(event)
-                    self.conn.commit()
-                    logger.info(f"Event logged: {action_name} - {status} - {event.event_id}")
-                    return event.event_id
-                except sqlite3.IntegrityError as e:
-                    self.conn.rollback()
-                    logger.warning(f"WORM storage integrity violation (attempt {attempt+1}): {e}")
-                    time.sleep(0.05 * (attempt + 1))
-                    continue
-                except Exception as e:
-                    self.conn.rollback()
-                    logger.error(f"Unexpected error during WORM event logging: {e}")
-                    raise
+            try:
+                self.conn.execute('BEGIN IMMEDIATE')
+                sequence_number = self._get_next_sequence_number()
+                event_id = action_id or CryptoManager.generate_uuid()
+                event = AuditEvent(
+                    timestamp=datetime.utcnow().isoformat() + "Z",
+                    event_id=event_id,
+                    sequence_number=sequence_number,
+                    action_name=action_name,
+                    status=status,
+                    metadata=metadata,
+                    risk_tier=risk_tier,
+                    requires_approval=requires_approval,
+                    human_decision=human_decision,
+                    sop_reference=f"SOP-GOV-001-{risk_tier}",
+                    primary_hash="",
+                    chain_hash="",
+                    tamper_seal=""
+                )
+                event_data_for_hash = {
+                    "timestamp": event.timestamp,
+                    "event_id": event.event_id,
+                    "sequence_number": event.sequence_number,
+                    "action_name": event.action_name,
+                    "status": event.status,
+                    "metadata": event.metadata,
+                    "risk_tier": event.risk_tier,
+                    "requires_approval": event.requires_approval,
+                    "human_decision": event.human_decision,
+                    "sop_reference": event.sop_reference
+                }
+                event_data = json.dumps(event_data_for_hash, sort_keys=True)
+                event.primary_hash = CryptoManager.generate_sha256(event_data)
+                previous_hash = self._get_last_chain_hash()
+                event.chain_hash = CryptoManager.create_chain_hash(event_data, previous_hash)
+                event.tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
+                self._write_event_to_db(event)
+                self.conn.commit()
+                logger.info(f"Event logged: {action_name} - {status} - {event.event_id}")
+                return event.event_id
+            except sqlite3.IntegrityError as e:
+                self.conn.rollback()
+                logger.warning(f"WORM storage integrity violation (attempt {attempt+1}): {e}")
+                time.sleep(0.1 * (attempt + 1))
+                continue
+            except Exception as e:
+                self.conn.rollback()
+                logger.error(f"Unexpected error during WORM event logging: {e}")
+                raise
         raise RuntimeError("Failed to log event after multiple retries due to concurrency/integrity errors.")
     
     def _write_event_to_db(self, event: AuditEvent):
