@@ -1,11 +1,23 @@
-# NOTREKT.AI v2.1
+# NOTREKT.AI v2.2 (Open Source Release)
+
+**This is the open source–ready version of NOTREKT.AI.**
+
+---
+
+**Versioning:**
+- v2.1: Original, pre–open source version (internal/private)
+- v2.2: Open source–compliant version (this folder)
+- v2.3: Latest development version (based on v2.2)
+
+---
+
 
 **Next-Generation AI Governance, Audit, and Compliance System**
 
 ---
 
 ## Overview
-NOTREKT.AI v2.1 is a production-grade, modular, and fully auditable AI governance platform. It features:
+NOTREKT.AI v2.2 is a production-grade, modular, and fully auditable AI governance platform. It features:
 - Secure, cryptographically chained WORM audit logging
 - Human-in-the-Loop (HITL) workflows
 - Modular agent architecture (governance, code, research, integrity, HITL)
