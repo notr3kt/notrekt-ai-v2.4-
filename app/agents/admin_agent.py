@@ -4,7 +4,7 @@ SOP-GOV-003
 """
 
 from app.utils.llm_provider import LLMProvider
-from datetime import datetime
+from datetime import datetime, timezone
 
 class AdminAgent:
     def __init__(self, sop_registry, model_registry, worm_storage):
@@ -33,7 +33,7 @@ class AdminAgent:
             metadata={
                 "sop_version": sop_version,
                 "llm_explanation": llm_explanation,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.now(timezone.utc).isoformat()
             },
             risk_tier="LOW",
             requires_approval=False,
@@ -62,7 +62,7 @@ class AdminAgent:
             metadata={
                 "model_version": model_version,
                 "llm_explanation": llm_explanation,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.now(timezone.utc).isoformat()
             },
             risk_tier="LOW",
             requires_approval=False,

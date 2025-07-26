@@ -87,3 +87,9 @@ trusted_knowledge_corpus/
 
 # Ignore audit exports
 notrekt_audit_export.json
+
+# Ignore API credentials and tokens
+config/*.json
+token.json
+.env
+/trusted_knowledge_corpus

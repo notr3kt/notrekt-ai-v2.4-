@@ -6,7 +6,7 @@ Production-ready governance system with HITL workflow and secure audit logging.
 
 import uuid
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 import asyncio
 
@@ -128,11 +128,11 @@ class NotRektAISystem:
         action_id = str(uuid.uuid4())
         
         logger.info(f"Processing action: {action_name} (ID: {action_id})")
-        # Modular agent dispatch
-        self.agents = {
-            "RESEARCH": getattr(self, "research_agent", None),
-            "WRITE_CODE": getattr(self, "code_agent", None),
-            "DATA_ANALYSIS": getattr(self, "data_agent", None),
+        # Modular agent dispatch (dictionary mapping)
+        self.agent_dispatch = {
+            "RESEARCH": lambda metadata: self.research_agent.query(metadata) if getattr(self, "research_agent", None) else "Research agent unavailable.",
+            "WRITE_CODE": lambda metadata: self.code_agent.generate_code(metadata) if getattr(self, "code_agent", None) else "Code agent unavailable.",
+            "DATA_ANALYSIS": lambda metadata: self.data_agent.analyze(metadata) if getattr(self, "data_agent", None) else "Data agent unavailable.",
             # Add more as needed
         }
         # STEP 1: GOVERN - CGO Agent Validation
@@ -187,7 +187,7 @@ class NotRektAISystem:
         # STEP 2: HUMAN-IN-THE-LOOP (HITL) - If Required
         if validation_result.requires_approval:
             logger.info(f"Action requires human approval - queuing for review")
-            timestamp = datetime.utcnow().isoformat() + "Z"
+            timestamp = datetime.now(timezone.utc).isoformat()
             self._db_add_pending_action(
                 action_id,
                 action_name,
@@ -359,38 +359,20 @@ class NotRektAISystem:
     async def _simulate_execution(self, action_name: str, metadata: Dict[str, Any]) -> str:
         """
         Simulate action execution for demonstration purposes.
-        In production, this would contain actual business logic.
+        In production, this would contain actual business logic or agent calls.
         """
-        # Add realistic delay to simulate processing
         await asyncio.sleep(0.1)
-        
-        if action_name.upper() == "RESEARCH":
-            topic = metadata.get('topic', 'general topic')
-            source = metadata.get('source', 'internal knowledge base')
-            return f"Research completed on '{topic}' using source: {source}. Found 15 relevant documents."
-        
-        elif action_name.upper() == "WRITE_CODE":
-            module = metadata.get('module_name', 'main')
-            language = metadata.get('language', 'python')
-            return f"Code generation completed for module '{module}' in {language}. Generated 150 lines of code."
-        
-        elif action_name.upper() == "DATA_ANALYSIS":
-            dataset = metadata.get('dataset_name', 'default')
-            analysis_type = metadata.get('analysis_type', 'summary')
-            return f"Data analysis ({analysis_type}) completed on dataset '{dataset}'. Processed 1,250 records."
-        
-        elif action_name.upper() == "FILE_OPERATIONS":
-            operation = metadata.get('operation_type', 'read')
-            file_path = metadata.get('file_path', 'unknown')
-            return f"File operation '{operation}' completed on '{file_path}'. Operation successful."
-        
-        elif action_name.upper() == "NETWORK_REQUEST":
-            url = metadata.get('url', 'unknown')
-            method = metadata.get('method', 'GET')
-            return f"Network request ({method}) to '{url}' completed. Response: 200 OK, 2.5KB received."
-        
-        else:
-            return f"Action '{action_name}' executed successfully with provided metadata."
+        dispatch_map = {
+            "RESEARCH": lambda m: f"Research completed on '{m.get('topic', 'general topic')}' using source: {m.get('source', 'internal knowledge base')}. Found 15 relevant documents.",
+            "WRITE_CODE": lambda m: f"Code generation completed for module '{m.get('module_name', 'main')}' in {m.get('language', 'python')}. Generated 150 lines of code.",
+            "DATA_ANALYSIS": lambda m: f"Data analysis ({m.get('analysis_type', 'summary')}) completed on dataset '{m.get('dataset_name', 'default')}'. Processed 1,250 records.",
+            "FILE_OPERATIONS": lambda m: f"File operation '{m.get('operation_type', 'read')}' completed on '{m.get('file_path', 'unknown')}'. Operation successful.",
+            "NETWORK_REQUEST": lambda m: f"Network request ({m.get('method', 'GET')}) to '{m.get('url', 'unknown')}' completed. Response: 200 OK, 2.5KB received."
+        }
+        key = action_name.upper()
+        if key in dispatch_map:
+            return dispatch_map[key](metadata)
+        return f"Action '{action_name}' executed successfully with provided metadata."
     
     def get_pending_actions(self) -> List[Dict[str, Any]]:
         """Get all actions pending human approval from DB."""

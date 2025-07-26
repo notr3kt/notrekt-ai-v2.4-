@@ -1,0 +1,26 @@
+{
+  "exported_at": "2025-07-26T23:37:03.962994+00:00",
+  "event_count": 1,
+  "audit_events": [
+    {
+      "sequence_number": 0,
+      "timestamp": "2025-07-26T23:37:03.958009+00:00",
+      "event_id": "253fff7a-60bf-41dc-bd08-b5bc67bec574",
+      "action_name": "SYSTEM_INIT",
+      "status": "SUCCESS",
+      "risk_tier": "MINIMAL",
+      "requires_approval": 0,
+      "human_decision": null,
+      "sop_reference": "SOP-MEM-001",
+      "primary_hash": "219d31ace45e69e8acfb76e25d192ac70ff9e10e15d979b105f50b85756ea7b0",
+      "chain_hash": "675af3293c0786a1754a5501f4298c9269b32e36444d7ab6402a2f466eb388e0",
+      "tamper_seal": "cc63305fdecbdf9d18d0327e5b1e64f8d98b0f948a3fc3c74267241712adf751",
+      "signature": "",
+      "created_at": "2025-07-26 23:37:03",
+      "metadata": {
+        "initialization": "NOTREKT.AI v2.0 WORM Storage Initialized"
+      }
+    }
+  ],
+  "export_hash": "0e89cfc4bccbd50278781a271a31bbe5082728c5e90d3df83e329f5bb67e7de2"
+}

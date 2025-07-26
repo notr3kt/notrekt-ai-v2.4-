@@ -79,8 +79,43 @@ async def api_key_check(x_api_key: str = Header(None)):
 @app.middleware("http")
 async def verifier_agent_middleware(request: Request, call_next):
     response = await call_next(request)
-    # [GAP: Intercept/validate AI responses against RAG/KB]
-    return response
+    # Intercept/validate AI responses against RAG/KB
+    try:
+        # Only process JSON responses
+        if response.headers.get("content-type", "").startswith("application/json"):
+            body = b""
+            async for chunk in response.body_iterator:
+                body += chunk
+            import json
+            data = json.loads(body.decode())
+            ai_output = data.get("answer") or data.get("output") or data.get("result")
+            sources = data.get("sources") or data.get("sources_used") or []
+            if ai_output and sources:
+                verifier = VerifierAgent()
+                verification = verifier.verify_output(ai_output, sources)
+                # Log result immutably (WORMStorage)
+                try:
+                    from app.worm_storage import WORMStorage
+                    WORMStorage().log_event({
+                        "event": "ai_output_verification",
+                        "ai_output": ai_output,
+                        "sources": sources,
+                        "verification": verification
+                    })
+                except Exception:
+                    pass
+                # Attach verification to response
+                data["verification"] = verification
+                from starlette.responses import JSONResponse
+                return JSONResponse(data, status_code=response.status_code)
+            else:
+                # Rebuild original response
+                from starlette.responses import Response
+                return Response(body, status_code=response.status_code, headers=dict(response.headers))
+        else:
+            return response
+    except Exception:
+        return response
 
 # HITL endpoints (SOP-EXE-002)
 @app.post("/action/approve", dependencies=[Depends(get_current_user)])

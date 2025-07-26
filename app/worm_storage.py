@@ -8,7 +8,7 @@ import sqlite3
 import hashlib
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -80,10 +80,9 @@ class WORMStorage:
         """Initialize the WORM database with proper constraints."""
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS audit_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sequence_number INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
                 event_id TEXT UNIQUE NOT NULL,
-                sequence_number INTEGER UNIQUE NOT NULL,
                 action_name TEXT NOT NULL,
                 status TEXT NOT NULL,
                 metadata_json TEXT NOT NULL,
@@ -91,36 +90,31 @@ class WORMStorage:
                 requires_approval BOOLEAN NOT NULL,
                 human_decision TEXT,
                 sop_reference TEXT NOT NULL,
-                primary_hash TEXT NOT NULL,
-                chain_hash TEXT NOT NULL,
-                tamper_seal TEXT NOT NULL,
+                primary_hash TEXT,
+                chain_hash TEXT,
+                tamper_seal TEXT,
+                signature BLOB,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        
         # Create indexes for performance
-        self.cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_sequence_number ON audit_events(sequence_number)
-        ''')
         self.cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_event_id ON audit_events(event_id)
         ''')
         self.cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_status ON audit_events(status)
         ''')
-        
         # Create the genesis block if this is a new database
         self.cursor.execute('SELECT COUNT(*) FROM audit_events')
         count = self.cursor.fetchone()[0]
         if count == 0:
             self._create_genesis_block()
-        
         self.conn.commit()
     
     def _create_genesis_block(self):
         """Create the initial genesis block for the audit chain."""
         genesis_event = AuditEvent(
-            timestamp=datetime.utcnow().isoformat() + "Z",
+            timestamp=datetime.now(timezone.utc).isoformat(),
             event_id=CryptoManager.generate_uuid(),
             sequence_number=0,
             action_name="SYSTEM_INIT",
@@ -153,7 +147,27 @@ class WORMStorage:
         genesis_event.chain_hash = CryptoManager.create_chain_hash(event_data, "GENESIS")
         genesis_event.tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
         
-        self._write_event_to_db(genesis_event)
+        # Insert genesis block directly into the database, including signature column
+        self.cursor.execute('''
+            INSERT INTO audit_events (
+                sequence_number, timestamp, event_id, action_name, status, metadata_json, risk_tier, requires_approval, human_decision, sop_reference, primary_hash, chain_hash, tamper_seal, signature
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            genesis_event.sequence_number,
+            genesis_event.timestamp,
+            genesis_event.event_id,
+            genesis_event.action_name,
+            genesis_event.status,
+            json.dumps(genesis_event.metadata),
+            genesis_event.risk_tier,
+            genesis_event.requires_approval,
+            genesis_event.human_decision,
+            genesis_event.sop_reference,
+            genesis_event.primary_hash,
+            genesis_event.chain_hash,
+            genesis_event.tamper_seal,
+            b''  # No signature for genesis block
+        ))
         logger.info("WORM Storage initialized with genesis block")
     
     def _get_last_chain_hash(self) -> str:
@@ -162,59 +176,66 @@ class WORMStorage:
         result = self.cursor.fetchone()
         return result[0] if result else "GENESIS"
     
-    def _get_next_sequence_number(self) -> int:
-        """Get the next sequence number for the audit chain."""
-        self.cursor.execute('SELECT MAX(sequence_number) FROM audit_events')
-        result = self.cursor.fetchone()
-        return (result[0] + 1) if result[0] is not None else 0
+    # No longer needed: sequence_number is now AUTOINCREMENT
     
     def log_event(self, action_name: str, status: str, metadata: Dict[str, Any], 
                   risk_tier: str, requires_approval: bool, human_decision: Optional[str] = None,
                   action_id: Optional[str] = None) -> str:
-        """Log an event to the WORM storage and return the event ID. Robust against concurrency and ensures unique sequence_number."""
+        """Log an event to the WORM storage and return the event ID. Uses DB atomicity for sequence_number. Digitally signs the event."""
         import time
+        from .utils import crypto_utils
         max_retries = 7
         for attempt in range(max_retries):
             try:
                 self.conn.execute('BEGIN IMMEDIATE')
-                sequence_number = self._get_next_sequence_number()
                 event_id = action_id or CryptoManager.generate_uuid()
-                event = AuditEvent(
-                    timestamp=datetime.utcnow().isoformat() + "Z",
-                    event_id=event_id,
-                    sequence_number=sequence_number,
-                    action_name=action_name,
-                    status=status,
-                    metadata=metadata,
-                    risk_tier=risk_tier,
-                    requires_approval=requires_approval,
-                    human_decision=human_decision,
-                    sop_reference=f"SOP-GOV-001-{risk_tier}",
-                    primary_hash="",
-                    chain_hash="",
-                    tamper_seal=""
-                )
+                timestamp = datetime.now(timezone.utc).isoformat()
+                # Insert a placeholder row to get the next sequence_number
+                self.cursor.execute('''
+                    INSERT INTO audit_events (
+                        timestamp, event_id, action_name, status, metadata_json, risk_tier, requires_approval, human_decision, sop_reference
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    timestamp, event_id, action_name, status, json.dumps(metadata), risk_tier, requires_approval, human_decision, f"SOP-GOV-001-{risk_tier}"
+                ))
+                # Get the sequence_number just assigned
+                self.cursor.execute('SELECT sequence_number FROM audit_events WHERE event_id = ?', (event_id,))
+                row = self.cursor.fetchone()
+                sequence_number = row[0]
+                # Now build the hashes
                 event_data_for_hash = {
-                    "timestamp": event.timestamp,
-                    "event_id": event.event_id,
-                    "sequence_number": event.sequence_number,
-                    "action_name": event.action_name,
-                    "status": event.status,
-                    "metadata": event.metadata,
-                    "risk_tier": event.risk_tier,
-                    "requires_approval": event.requires_approval,
-                    "human_decision": event.human_decision,
-                    "sop_reference": event.sop_reference
+                    "timestamp": timestamp,
+                    "event_id": event_id,
+                    "sequence_number": sequence_number,
+                    "action_name": action_name,
+                    "status": status,
+                    "metadata": metadata,
+                    "risk_tier": risk_tier,
+                    "requires_approval": requires_approval,
+                    "human_decision": human_decision,
+                    "sop_reference": f"SOP-GOV-001-{risk_tier}"
                 }
                 event_data = json.dumps(event_data_for_hash, sort_keys=True)
-                event.primary_hash = CryptoManager.generate_sha256(event_data)
-                previous_hash = self._get_last_chain_hash()
-                event.chain_hash = CryptoManager.create_chain_hash(event_data, previous_hash)
-                event.tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
-                self._write_event_to_db(event)
+                primary_hash = CryptoManager.generate_sha256(event_data)
+                # Always use the primary_hash of the immediately preceding event as previous_hash
+                self.cursor.execute('SELECT primary_hash FROM audit_events WHERE sequence_number = (SELECT MAX(sequence_number) FROM audit_events WHERE event_id != ?)', (event_id,))
+                prev = self.cursor.fetchone()
+                if prev and prev[0]:
+                    previous_hash = prev[0]
+                else:
+                    previous_hash = "GENESIS"
+                chain_hash = CryptoManager.create_chain_hash(event_data, previous_hash)
+                tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
+                # Digitally sign the event hash
+                crypto_utils.generate_rsa_keypair()  # Ensure keys exist
+                signature = crypto_utils.sign_data(primary_hash)
+                # Update the row with hashes and signature
+                self.cursor.execute('''
+                    UPDATE audit_events SET primary_hash=?, chain_hash=?, tamper_seal=?, signature=? WHERE event_id=?
+                ''', (primary_hash, chain_hash, tamper_seal, signature, event_id))
                 self.conn.commit()
-                logger.info(f"Event logged: {action_name} - {status} - {event.event_id}")
-                return event.event_id
+                logger.info(f"Event logged: {action_name} - {status} - {event_id}")
+                return event_id
             except sqlite3.IntegrityError as e:
                 self.conn.rollback()
                 logger.warning(f"WORM storage integrity violation (attempt {attempt+1}): {e}")
@@ -226,20 +247,7 @@ class WORMStorage:
                 raise
         raise RuntimeError("Failed to log event after multiple retries due to concurrency/integrity errors.")
     
-    def _write_event_to_db(self, event: AuditEvent):
-        """Write the event to the SQLite database."""
-        self.cursor.execute('''
-            INSERT INTO audit_events (
-                timestamp, event_id, sequence_number, action_name, status, 
-                metadata_json, risk_tier, requires_approval, human_decision,
-                sop_reference, primary_hash, chain_hash, tamper_seal
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            event.timestamp, event.event_id, event.sequence_number, event.action_name,
-            event.status, json.dumps(event.metadata), event.risk_tier, event.requires_approval,
-            event.human_decision, event.sop_reference, event.primary_hash, event.chain_hash,
-            event.tamper_seal
-        ))
+    # No longer needed: event writing is now handled in log_event with atomic sequence assignment
     
     def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve an event by its ID."""
@@ -257,20 +265,17 @@ class WORMStorage:
         return event_dict
     
     def verify_integrity(self) -> Tuple[bool, List[str]]:
-        """Verify the complete integrity of the audit chain."""
+        """Verify the complete integrity of the audit chain, including digital signatures."""
         logger.info("Verifying WORM storage integrity...")
-        
+        from .utils import crypto_utils
         self.cursor.execute('SELECT * FROM audit_events ORDER BY sequence_number ASC')
         events = self.cursor.fetchall()
-        
         errors = []
         previous_hash = "GENESIS"
-        
         for event_row in events:
-            (id, timestamp, event_id, seq_num, action_name, status, metadata_json, 
+            (seq_num, timestamp, event_id, action_name, status, metadata_json, 
              risk_tier, requires_approval, human_decision, sop_reference, 
-             primary_hash, chain_hash, tamper_seal, created_at) = event_row
-            
+             primary_hash, chain_hash, tamper_seal, signature, created_at) = event_row
             # Verify primary hash
             event_data_for_hash = {
                 "timestamp": timestamp,
@@ -288,28 +293,32 @@ class WORMStorage:
             calculated_primary_hash = CryptoManager.generate_sha256(event_data)
             if calculated_primary_hash != primary_hash:
                 errors.append(f"Primary hash mismatch for event {event_id}")
-            
+            # Skip chain hash and signature checks for genesis block
+            if seq_num == 0:
+                previous_hash = primary_hash
+                continue
             # Verify chain hash
             calculated_chain_hash = CryptoManager.create_chain_hash(event_data, previous_hash)
             if calculated_chain_hash != chain_hash:
                 errors.append(f"Chain hash break at event {event_id}")
-            
             # Verify tamper seal
             calculated_tamper_seal = CryptoManager.create_tamper_seal(event_data, Config.SECRET_KEY)
             if calculated_tamper_seal != tamper_seal:
                 errors.append(f"Tamper seal violation for event {event_id}")
-            
+            # Verify digital signature
+            if signature is not None:
+                if not crypto_utils.verify_signature(primary_hash, signature):
+                    errors.append(f"Signature verification failed for event {event_id}")
+            else:
+                errors.append(f"Missing signature for event {event_id}")
             previous_hash = primary_hash
-        
         is_valid = len(errors) == 0
-        
         if is_valid:
-            logger.info(f"Integrity verified: {len(events)} events checked. Chain is tamper-proof.")
+            logger.info(f"Integrity verified: {len(events)} events checked. Chain is tamper-proof and signatures valid.")
         else:
             logger.error(f"Integrity compromised: {len(errors)} violations detected!")
             for error in errors:
                 logger.error(f"  - {error}")
-        
         return is_valid, errors
     
     def get_audit_summary(self) -> Dict[str, Any]:

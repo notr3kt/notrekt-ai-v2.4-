@@ -3,6 +3,7 @@ HITLAgent - Manages Human-in-the-Loop approvals, denials, and audit logging.
 SOP-EXE-002, SOP-GOV-001
 """
 
+from datetime import datetime, timezone
 from datetime import datetime
 from app.utils.llm_provider import LLMProvider
 
@@ -22,7 +23,7 @@ class HITLAgent:
             "approver": approver_context.get("user"),
             "decision": "approved",
             "llm_explanation": llm_explanation,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         self.audit_log.log_event(
             action_name="HITL_APPROVAL",
@@ -46,7 +47,7 @@ class HITLAgent:
             "approver": approver_context.get("user"),
             "decision": "rejected",
             "llm_explanation": llm_explanation,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         self.audit_log.log_event(
             action_name="HITL_REJECTION",

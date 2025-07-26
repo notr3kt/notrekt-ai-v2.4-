@@ -4,11 +4,15 @@ NOTREKT.AI v2.0 - Configuration Management
 Security-first configuration using environment variables and validation.
 """
 
+
 import os
 import logging
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
+
+# Logger for config
+logger = logging.getLogger("notrekt.config")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -30,7 +34,10 @@ class Config:
     WORM_DB_PATH: str = os.path.abspath(os.getenv('NOTREKT_WORM_DB_PATH', os.path.join(BASE_DIR, '..', 'data', 'notrekt_worm_audit.db')))
 
     # Rules Configuration
-    RULES_PATH: str = os.path.abspath(os.getenv('NOTREKT_RULES_PATH', os.path.join(BASE_DIR, '..', 'config', 'rules.json')))
+    # Always use the correct config/rules.json path unless explicitly overridden
+    _default_rules_path = os.path.abspath(os.path.join(BASE_DIR, '..', 'config', 'rules.json'))
+    RULES_PATH: str = os.path.abspath(os.getenv('NOTREKT_RULES_PATH', _default_rules_path))
+    logger.info(f"[Config] Using RULES_PATH: {RULES_PATH}")
 
     # RAG System Configuration
     CORPUS_PATH: str = os.path.abspath(os.getenv('NOTREKT_CORPUS_PATH', os.path.join(BASE_DIR, '..', 'trusted_knowledge_corpus')))

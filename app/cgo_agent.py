@@ -32,7 +32,8 @@ class CGOAgent:
     def __init__(self, rules_path: Optional[str] = None):
         self.rules_path = rules_path or Config.RULES_PATH
         self.rules_data = self._load_rules()
-        
+        print(f"[DEBUG] CGOAgent using rules file: {self.rules_path}")
+        print(f"[DEBUG] SOP_AS_LAW in rules: {self.rules_data.get('SOP_AS_LAW')}")
         logger.info(f"CGO Agent initialized with {len(self.rules_data.get('rules', []))} governance rules")
     
     def _load_rules(self) -> Dict[str, Any]:

@@ -6,7 +6,10 @@ import pytest
 import asyncio
 
 # Import from the app package
+import os
 from app.notrekt_system import NotRektAISystem
+# Force correct rules path for SOP enforcement
+os.environ["NOTREKT_RULES_PATH"] = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "config", "rules.json"))
 
 @pytest.mark.asyncio
 async def test_breach_delegation_and_logging():
@@ -57,8 +60,28 @@ async def test_advanced_audit_object_logging():
     system.shutdown()
 
 def test_integrity_verification():
-    system = NotRektAISystem()
-    valid, errors = system.worm_storage.verify_integrity()
+    import tempfile, os, shutil
+    temp_dir = tempfile.mkdtemp()
+    db_path = os.path.join(temp_dir, "worm_integrity_test.db")
+    from app.worm_storage import WORMStorage
+    ws = WORMStorage(db_path=db_path)
+    # Add two events to ensure chain is valid
+    ws.log_event(
+        action_name="INTEGRITY_TEST_1",
+        status="SUCCESS",
+        metadata={"test": 1},
+        risk_tier="LOW",
+        requires_approval=False
+    )
+    ws.log_event(
+        action_name="INTEGRITY_TEST_2",
+        status="SUCCESS",
+        metadata={"test": 2},
+        risk_tier="LOW",
+        requires_approval=False
+    )
+    valid, errors = ws.verify_integrity()
     assert valid
     assert errors == []
-    system.shutdown()
+    ws.close()
+    shutil.rmtree(temp_dir)

@@ -60,13 +60,33 @@ def test_code_agent():
     code = code_agent.generate_code("Write a Python function to add two numbers.", validation_rules="Must use type hints and return type.")
     print("Generated Code:", code)
 
-# 5. Test AdminAgent
-admin_agent = AdminAgent("sop_registry.json", "model_registry.json", worm)
+
+import os
+import tempfile
+import shutil
 def test_admin_agent():
-    print("Testing AdminAgent.register_sop_version...")
-    admin_agent.register_sop_version("v2.3-test", context_info="E2E test run.")
-    print("Testing AdminAgent.register_model_version...")
-    admin_agent.register_model_version("model-v2.3-test", context_info="E2E test run.")
+    temp_dir = tempfile.mkdtemp()
+    sop_registry_db = os.path.join(temp_dir, "sop_registry_test.db")
+    model_registry_db = os.path.join(temp_dir, "model_registry_test.db")
+    # Initialize both DBs with the audit_events schema
+    import sqlite3
+    schema_path = os.path.join(os.path.dirname(__file__), "model_registry_test_schema.sql")
+    for db_path in [sop_registry_db, model_registry_db]:
+        conn = sqlite3.connect(db_path)
+        with open(schema_path, "r", encoding="utf-8") as f:
+            conn.executescript(f.read())
+        conn.commit()
+        conn.close()
+    worm = WORMStorage(db_path=sop_registry_db)
+    admin_agent = AdminAgent(sop_registry_db, model_registry_db, worm)
+    try:
+        print("Testing AdminAgent.register_sop_version...")
+        admin_agent.register_sop_version("v2.3-test", context_info="E2E test run.")
+        print("Testing AdminAgent.register_model_version...")
+        admin_agent.register_model_version("model-v2.3-test", context_info="E2E test run.")
+    finally:
+        worm.close()
+        shutil.rmtree(temp_dir)
 
 if __name__ == "__main__":
     test_llm_provider()

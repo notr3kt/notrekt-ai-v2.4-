@@ -4,6 +4,7 @@ SOP-REV-002, SOP-GOV-001
 """
 
 
+from datetime import datetime, timezone
 from datetime import datetime
 import json
 from app.utils.llm_provider import LLMProvider
@@ -35,7 +36,7 @@ class IntegrityAgent:
                 "prompt": prompt,
                 "llm_summary": llm_summary,
                 "integrity_result": integrity_result,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.now(timezone.utc).isoformat()
             },
             risk_tier="MEDIUM",
             requires_approval=False,
@@ -68,7 +69,7 @@ class IntegrityAgent:
                 "prompt": prompt,
                 "llm_recommendation": llm_recommendation,
                 "breach_event": breach_event,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.now(timezone.utc).isoformat()
             },
             risk_tier=risk_tier,
             requires_approval=False,
@@ -83,7 +84,7 @@ class IntegrityAgent:
                     "breach_event": breach_event,
                     "delegated_to": "executor_agent",
                     "llm_recommendation": llm_recommendation,
-                    "timestamp": datetime.utcnow().isoformat() + "Z"
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 },
                 risk_tier="LOW",
                 requires_approval=False,
@@ -101,7 +102,7 @@ class IntegrityAgent:
                     "breach_event": breach_event,
                     "delegated_to": "security_officer",
                     "llm_recommendation": llm_recommendation,
-                    "timestamp": datetime.utcnow().isoformat() + "Z"
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 },
                 risk_tier=risk_tier,
                 requires_approval=True,

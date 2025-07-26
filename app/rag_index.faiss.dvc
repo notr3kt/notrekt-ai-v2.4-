@@ -1,0 +1,5 @@
+outs:
+- md5: e34188da8e6622084d5d13d96ac9d7f6
+  size: 50
+  hash: md5
+  path: rag_index.faiss

@@ -10,7 +10,7 @@ import hashlib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import pickle
 
 
@@ -187,10 +187,8 @@ class VectorStore:
     def _rebuild_index(self):
         """Rebuild the entire vector index from corpus files."""
         logger.info("Rebuilding vector index from corpus...")
-        
         # Clear existing data
         self.documents = []
-        
         # Initialize new FAISS index
         if faiss is not None and hasattr(faiss, 'IndexFlatIP'):
             self.index = faiss.IndexFlatIP(self.embedding_dim)
@@ -198,6 +196,14 @@ class VectorStore:
             self.index = None
         # Index all documents in corpus
         self.index_corpus()
+        # --- Automate DVC tracking after index rebuild ---
+        import subprocess
+        try:
+            subprocess.run(["dvc", "add", "trusted_knowledge_corpus/"], check=True)
+            subprocess.run(["dvc", "add", "app/rag_index.faiss"], check=True)
+            logger.info("DVC tracking updated for trusted_knowledge_corpus/ and app/rag_index.faiss.")
+        except Exception as e:
+            logger.warning(f"DVC automation failed: {e}")
     
     def _calculate_file_hash(self, file_path: Path) -> str:
         """Calculate SHA-256 hash of file content."""
@@ -290,7 +296,7 @@ class VectorStore:
                     source_path=str(file_path),
                     metadata=file_metadata,
                     hash=file_hash,
-                    indexed_at=datetime.utcnow().isoformat() + "Z"
+                    indexed_at=datetime.now(timezone.utc).isoformat()
                 )
                 # Generate embedding
                 embedding = None

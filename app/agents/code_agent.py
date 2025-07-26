@@ -4,7 +4,7 @@ SOP-REV-002, SOP-GOV-001
 """
 
 from app.utils.llm_provider import LLMProvider
-from datetime import datetime
+from datetime import datetime, timezone
 
 class CodeAgent:
     def __init__(self, worm_storage):
@@ -37,7 +37,7 @@ class CodeAgent:
                 "generated_code": code,
                 "validation_rules": validation_rules,
                 "validation_result": validation_result,
-                "timestamp": datetime.utcnow().isoformat() + "Z"
+                "timestamp": datetime.now(timezone.utc).isoformat()
             },
             risk_tier="MEDIUM",
             requires_approval=False,

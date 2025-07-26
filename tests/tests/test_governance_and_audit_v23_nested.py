@@ -57,8 +57,28 @@ async def test_advanced_audit_object_logging():
     system.shutdown()
 
 def test_integrity_verification():
-    system = NotRektAISystem()
-    valid, errors = system.worm_storage.verify_integrity()
+    import tempfile, os, shutil
+    temp_dir = tempfile.mkdtemp()
+    db_path = os.path.join(temp_dir, "worm_integrity_test.db")
+    from app.worm_storage import WORMStorage
+    ws = WORMStorage(db_path=db_path)
+    # Add two events to ensure chain is valid
+    ws.log_event(
+        action_name="INTEGRITY_TEST_1",
+        status="SUCCESS",
+        metadata={"test": 1},
+        risk_tier="LOW",
+        requires_approval=False
+    )
+    ws.log_event(
+        action_name="INTEGRITY_TEST_2",
+        status="SUCCESS",
+        metadata={"test": 2},
+        risk_tier="LOW",
+        requires_approval=False
+    )
+    valid, errors = ws.verify_integrity()
     assert valid
     assert errors == []
-    system.shutdown()
+    ws.close()
+    shutil.rmtree(temp_dir)
