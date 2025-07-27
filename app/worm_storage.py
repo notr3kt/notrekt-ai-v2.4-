@@ -181,10 +181,13 @@ class WORMStorage:
     def log_event(self, action_name: str, status: str, metadata: Dict[str, Any], 
                   risk_tier: str, requires_approval: bool, human_decision: Optional[str] = None,
                   action_id: Optional[str] = None) -> str:
-        """Log an event to the WORM storage and return the event ID. Uses DB atomicity for sequence_number. Digitally signs the event."""
+        """Log an event to the WORM storage and return the event ID. Uses DB atomicity for sequence_number. Digitally signs the event.
+        Implements robust retry logic with exponential backoff and jitter for sqlite3.IntegrityError."""
         import time
+        import random
         from .utils import crypto_utils
         max_retries = 7
+        base_delay = 0.15
         for attempt in range(max_retries):
             try:
                 self.conn.execute('BEGIN IMMEDIATE')
@@ -238,13 +241,17 @@ class WORMStorage:
                 return event_id
             except sqlite3.IntegrityError as e:
                 self.conn.rollback()
-                logger.warning(f"WORM storage integrity violation (attempt {attempt+1}): {e}")
-                time.sleep(0.1 * (attempt + 1))
+                # Exponential backoff with jitter
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 0.1)
+                logger.warning(f"WORM storage integrity violation (attempt {attempt+1}/{max_retries}): {e}. Retrying in {delay:.2f} seconds.")
+                time.sleep(delay)
                 continue
             except Exception as e:
                 self.conn.rollback()
-                logger.error(f"Unexpected error during WORM event logging: {e}")
-                raise
+                logger.error(f"Unexpected error during WORM event logging (attempt {attempt+1}/{max_retries}): {e}")
+                if attempt == max_retries - 1:
+                    raise
+                time.sleep(base_delay)
         raise RuntimeError("Failed to log event after multiple retries due to concurrency/integrity errors.")
     
     # No longer needed: event writing is now handled in log_event with atomic sequence assignment

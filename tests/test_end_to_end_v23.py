@@ -15,19 +15,20 @@ worm = WORMStorage(db_path='notrekt_worm_audit_test.db')
 
 # 1. Test LLMProvider (text, structured, multimodal)
 def test_llm_provider():
+    import asyncio
     print("Testing LLMProvider.generate_text...")
-    text = LLMProvider.generate_text("Summarize the importance of audit logging in AI governance.")
+    text = asyncio.run(LLMProvider.generate_text("Summarize the importance of audit logging in AI governance."))
     print("Text Response:", text)
 
     print("Testing LLMProvider.generate_structured_response...")
     schema = {"type": "object", "properties": {"summary": {"type": "string"}}}
-    structured = LLMProvider.generate_structured_response("Summarize the importance of audit logging in AI governance.", schema)
+    structured = asyncio.run(LLMProvider.generate_structured_response("Summarize the importance of audit logging in AI governance.", schema))
     print("Structured Response:", structured)
 
     print("Testing LLMProvider.generate_multimodal_response...")
     # Use a small blank PNG for demo
     blank_png = base64.b64encode(b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR').decode()
-    multimodal = LLMProvider.generate_multimodal_response("What is this image?", blank_png)
+    multimodal = asyncio.run(LLMProvider.generate_multimodal_response("What is this image?", blank_png))
     print("Multimodal Response:", multimodal)
 
 # 2. Test IntegrityAgent
@@ -45,12 +46,13 @@ def test_integrity_agent():
 # 3. Test HITLAgent
 hitl_agent = HITLAgent(worm)
 def test_hitl_agent():
+    import asyncio
     print("Testing HITLAgent.approve...")
-    approval = hitl_agent.approve("action123", {"user": "alice"})
+    approval = asyncio.run(hitl_agent.approve("action123", {"user": "alice"}))
     print("Approval:", approval)
 
     print("Testing HITLAgent.reject...")
-    rejection = hitl_agent.reject("action456", {"user": "bob"})
+    rejection = asyncio.run(hitl_agent.reject("action456", {"user": "bob"}))
     print("Rejection:", rejection)
 
 # 4. Test CodeAgent

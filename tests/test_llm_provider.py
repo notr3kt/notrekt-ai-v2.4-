@@ -12,13 +12,15 @@ class TestLLMProvider(unittest.TestCase):
                 {"content": {"parts": [{"text": "Paris"}]}}
             ]
         }
-        response = LLMProvider.generate_text("What is the capital of France?")
+        import asyncio
+        response = asyncio.run(LLMProvider.generate_text("What is the capital of France?"))
         self.assertEqual(response, "Paris")
 
     @patch('requests.post')
     def test_generate_text_api_error(self, mock_post):
         mock_post.side_effect = Exception("API error")
-        response = LLMProvider.generate_text("Test error")
+        import asyncio
+        response = asyncio.run(LLMProvider.generate_text("Test error"))
         self.assertIn("[GAP:", response)
 
 if __name__ == "__main__":

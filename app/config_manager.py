@@ -1,3 +1,6 @@
+# Fix for BASE_DIR undefined
+import os
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 #!/usr/bin/env python3
 """
 NOTREKT.AI v2.0 - Configuration Management
@@ -18,17 +21,25 @@ logger = logging.getLogger("notrekt.config")
 load_dotenv()
 
 class Config:
+    # Local LLM Model Paths
+    MISTRAL_LOCAL_MODEL_PATH: str = os.getenv('MISTRAL_LOCAL_MODEL_PATH', os.path.abspath(os.path.join(BASE_DIR, '..', 'mistralai', 'Mistral-7B-Instruct-v0.3')))
+    GEMMA_LOCAL_MODEL_PATH: str = os.getenv('GEMMA_LOCAL_MODEL_PATH', os.path.abspath(os.path.join(BASE_DIR, '..', 'google', 'gemma-7b-it')))
     """
     Centralized, security-first configuration management.
     All sensitive values must be loaded from environment variables.
     """
     
+
     # Security Configuration
     SECRET_KEY: str = os.getenv('NOTREKT_SECRET_KEY', 'INSECURE_DEFAULT_CHANGE_ME')
     ENVIRONMENT: str = os.getenv('NOTREKT_ENVIRONMENT', 'development')
-    
+
     # Base directory for absolute path resolution
     BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
+
+    # Local LLM Model Paths (must come after BASE_DIR)
+    MISTRAL_LOCAL_MODEL_PATH: str = os.getenv('MISTRAL_LOCAL_MODEL_PATH', os.path.abspath(os.path.join(BASE_DIR, '..', 'mistralai', 'Mistral-7B-Instruct-v0.3')))
+    GEMMA_LOCAL_MODEL_PATH: str = os.getenv('GEMMA_LOCAL_MODEL_PATH', os.path.abspath(os.path.join(BASE_DIR, '..', 'google', 'gemma-7b-it')))
 
     # Database Configuration  
     WORM_DB_PATH: str = os.path.abspath(os.getenv('NOTREKT_WORM_DB_PATH', os.path.join(BASE_DIR, '..', 'data', 'notrekt_worm_audit.db')))

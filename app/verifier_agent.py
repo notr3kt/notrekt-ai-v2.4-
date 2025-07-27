@@ -14,6 +14,39 @@ import re
 import logging
 
 class VerifierAgent:
+    def enforce_registry_check(self, registry, entry, registry_type="model"):
+        """
+        [STUB] Enforce registry check for model/SOP before use. Logs audit event if missing or invalid.
+        """
+        # TODO: Integrate with WORM storage and AdminAgent for real-time audit
+        if entry not in registry:
+            # Log a breach event (stub)
+            print(f"[AUDIT][STUB] {registry_type.title()} '{entry}' not found in registry. Breach logged.")
+            # In production, call worm_storage.log_event(...)
+            return False
+        return True
+    def enforce_structured_output(self, ai_output_content: str, response_schema: dict = None) -> dict:
+        """
+        Enforce that the AI output matches the required JSON structure.
+        Returns a dict with 'is_structured', 'missing_fields', and 'parsed' (if valid).
+        """
+        import json
+        if not response_schema:
+            return {"is_structured": True, "missing_fields": [], "parsed": ai_output_content}
+        try:
+            parsed = json.loads(ai_output_content) if isinstance(ai_output_content, str) else ai_output_content
+            missing = [k for k in response_schema.keys() if k not in parsed]
+            return {"is_structured": len(missing) == 0, "missing_fields": missing, "parsed": parsed}
+        except Exception as e:
+            return {"is_structured": False, "missing_fields": list(response_schema.keys()) if response_schema else [], "error": str(e)}
+
+    def check_sop_policy(self, ai_output_content: str, sop_policy: dict = None) -> dict:
+        """
+        Stub for semantic SOP policy checks. In production, this would check output against SOP rules.
+        Returns dict with 'policy_passed', 'violations', and 'details'.
+        """
+        # TODO: Implement real semantic policy checks using SOP registry and LLMs
+        return {"policy_passed": True, "violations": [], "details": "[GAP: SOP policy check not implemented]"}
     def __init__(self, rag_vector_store=None):
         # Optionally inject a RAG vector store for direct KB validation
         try:
@@ -31,7 +64,7 @@ class VerifierAgent:
         claims = [s.strip() for s in sentences if len(s.strip()) > 10]
         return claims
 
-    def verify_output(self, ai_output_content: str, sources_used: list, llm_backend: str = None) -> dict:
+    def verify_output(self, ai_output_content: str, sources_used: list, llm_backend: str = None, response_schema: dict = None, sop_policy: dict = None) -> dict:
         """
         Multi-step verification:
         1. Extract claims from output.
@@ -41,6 +74,30 @@ class VerifierAgent:
         """
         import json
         audit_log = []
+        # 1. Structured output enforcement
+        struct_result = self.enforce_structured_output(ai_output_content, response_schema)
+        if not struct_result["is_structured"]:
+            return {
+                "is_valid": False,
+                "confidence": 0,
+                "reason": f"Output missing required fields: {struct_result['missing_fields']}",
+                "breach_code": "STRUCTURE-FAIL",
+                "unsupported_claims": [],
+                "audit_log": audit_log,
+                "structure_error": struct_result.get("error")
+            }
+        # 2. SOP policy check (stub)
+        sop_result = self.check_sop_policy(ai_output_content, sop_policy)
+        if not sop_result["policy_passed"]:
+            return {
+                "is_valid": False,
+                "confidence": 0,
+                "reason": f"SOP policy violation: {sop_result['violations']}",
+                "breach_code": "SOP-POLICY-FAIL",
+                "unsupported_claims": [],
+                "audit_log": audit_log,
+                "policy_details": sop_result["details"]
+            }
         if not sources_used:
             return {
                 "is_valid": False,

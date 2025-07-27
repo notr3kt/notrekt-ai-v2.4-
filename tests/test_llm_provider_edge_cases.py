@@ -12,21 +12,24 @@ class TestLLMProviderEdgeCases(unittest.TestCase):
                 {"content": {"parts": [{"text": ""}]}}
             ]
         }
-        response = LLMProvider.generate_text("")
+        import asyncio
+        response = asyncio.run(LLMProvider.generate_text(""))
         self.assertEqual(response, "")
 
     @patch('requests.post')
     def test_generate_text_malformed_response(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.return_value = {"unexpected": "structure"}
-        response = LLMProvider.generate_text("Test malformed")
+        import asyncio
+        response = asyncio.run(LLMProvider.generate_text("Test malformed"))
         self.assertIn("[GAP:", response)
 
     @patch('requests.post')
     def test_generate_text_json_decode_error(self, mock_post):
         mock_post.return_value.status_code = 200
         mock_post.return_value.json.side_effect = Exception("JSON decode error")
-        response = LLMProvider.generate_text("Test JSON error")
+        import asyncio
+        response = asyncio.run(LLMProvider.generate_text("Test JSON error"))
         self.assertIn("[GAP:", response)
 
     @patch('requests.post')
@@ -37,8 +40,9 @@ class TestLLMProviderEdgeCases(unittest.TestCase):
                 {"content": {"parts": [{"text": "LogTest"}]}}
             ]
         }
+        import asyncio
         with self.assertLogs(level='INFO') as log:
-            response = LLMProvider.generate_text("Log this")
+            response = asyncio.run(LLMProvider.generate_text("Log this"))
             self.assertIn("LogTest", response)
             self.assertTrue(any("Calling LLM" in message for message in log.output))
 
